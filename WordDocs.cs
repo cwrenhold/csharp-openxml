@@ -1,9 +1,10 @@
 using System.Text.RegularExpressions;
-using Codeuctivity.OpenXmlPowerTools;
+// using Codeuctivity.OpenXmlPowerTools;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Drawing.Diagrams;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using OpenXmlPowerTools;
 
 namespace CsharpOpenXml;
 
@@ -145,44 +146,48 @@ public static class WordDocs
             }
         );
 
-
-
-
-
         var replacements = new Dictionary<string, string>
             {
-                { "{school name}", "Replacement Academy" },
-                { "{pupil first name}", "John" },
-                { "{pupil last name}", "Doe" },
-                { "{year group}", "Year 6" },
-                { "{class name}", "Dolphins" },
-                { "{academic year}", "2023-24"},
+                { "#{school name}#", "Replacement Academy" },
+                { "#{pupil first name}#", "John" },
+                { "#{pupil last name}#", "Doe" },
+                { "#{year group}#", "Year 6" },
+                { "#{class name}#", "Dolphins" },
+                { "#{academic year}#", "2023-24"},
 
-                { "{other_grade_label}", "Effort" },
-                { "{other_grade_1_grade}", "1 - Gooderer" },
-                { "{other grade 1 descriptor}", "Good - School defined description for this" },
-                { "{other grade 2 grade}", "2 - Good" },
-                { "{other grade 2 descriptor}", "Good - School defined description for this" },
-                { "{other grade 3 grade}", "3 - \"Acceptable\"" },
-                { "{other grade 3 descriptor}", "Good - School defined description for this" },
+                { "#{atl grade label}#", "Effort" },
+                { "#{atl grade 1 grade}#", "1 - Gooderer" },
+                { "#{atl grade 1 descriptor}#", "Good - School defined description for this" },
+                { "#{atl grade 2 grade}#", "2 - Good" },
+                { "#{atl grade 2 descriptor}#", "Good - School defined description for this" },
+                { "#{atl grade 3 grade}#", "3 - \"Acceptable\"" },
+                { "#{atl grade 3 descriptor}#", "Good - School defined description for this" },
 
-                { "{reading summative result reading}", "Just At" },
-                { "{summative result writing}", "Securely At" },
-                { "{summative result mathematics}", "Below" },
+                { "#{reading summative result reading}#", "Just At" },
+                { "#{summative result writing}#", "Securely At" },
+                { "#{summative result mathematics}#", "Below" },
             };
 
         foreach (var item in subjectResults)
         {
-            replacements.Add($"{{subject {item.Label} label}}", item.Label);
-            replacements.Add($"{{subject {item.Label} result}}", item.Result);
-            replacements.Add($"{{subject {item.Label} other grade}}", item.OtherGrade);
+            var subjectName = item.Label.ToLower();
+
+            // For each subject, create the replacements in the format of:
+            // #{subject reading label}#
+            // #{subject reading result}#
+            // #{subject reading other grade}#
+            // #{subject reading target 1 text}#
+            // #{subject reading target 1 colour}#
+            replacements.Add($"#{{subject {subjectName} label}}#", item.Label);
+            replacements.Add($"#{{subject {subjectName} result}}#", item.Result);
+            replacements.Add($"#{{subject {subjectName} other grade}}#", item.OtherGrade);
 
             // we will get the 3 targets but need to replace the placeholders for all
             for (var j = 0; j < 3; j++)
             {
                 var target = item.Targets.ElementAtOrDefault(j);
-                replacements.Add($"{{subject {item.Label} target {j + 1} text}}", target.Text ?? "");
-                replacements.Add($"{{subject {item.Label} target {j + 1} colour}}", target.Colour ?? "");
+                replacements.Add($"#{{subject {subjectName} target {j + 1} text}}#", target.Text ?? "");
+                replacements.Add($"#{{subject {subjectName} target {j + 1} colour}}#", target.Colour ?? "");
             }
         }
 
@@ -190,36 +195,123 @@ public static class WordDocs
         File.Copy("ParentReportTemplate_Four.docx", outputFilePath, true);
         using (var wordDocument = WordprocessingDocument.Open(outputFilePath, true))
         {
-            var mainPart = wordDocument.MainDocumentPart;
-            var body = mainPart?.Document.Body;
+            ReplaceStrings(wordDocument.MainDocumentPart, wordDocument.MainDocumentPart?.Document?.Body, replacements);
 
-            if (body == null || mainPart == null)
+            foreach (var headerPart in wordDocument.MainDocumentPart?.HeaderParts ?? Enumerable.Empty<HeaderPart>())
             {
-                return;
+                ReplaceStrings(wordDocument.MainDocumentPart, headerPart.Header, replacements);
             }
 
-            foreach (var replacement in replacements)
+            foreach (var footerPart in wordDocument.MainDocumentPart?.FooterParts ?? Enumerable.Empty<FooterPart>())
             {
-                TextReplacer.SearchAndReplace(wordDocument, replacement.Key, replacement.Value, false);
+                ReplaceStrings(wordDocument.MainDocumentPart, footerPart.Footer, replacements);
             }
-
-            // // Replace the placeholders
-            // foreach (var text in body.Descendants<Text>())
-            // {
-            //     foreach (var replacement in replacements)
-            //     {
-            //         text.Text = text.Text.Replace(replacement.Key, replacement.Value);
-
-            //     }
-
-            //     if (text.Text.Contains("{") || text.Text.Contains("}"))
-            //     {
-            //         System.Diagnostics.Debug.WriteLine($"Unreplaced placeholder: {text.Text}");
-            //     }
-            // }
 
             // Save the document to the output directory
             wordDocument.Save();
         }
+    }
+    public static void ReplaceStrings(OpenXmlPart? part, OpenXmlCompositeElement? partElement, Dictionary<string, string> replacements)
+    {
+        if (part is null || partElement is null)
+        {
+            return;
+        }
+
+        // var mainPart = part.GetXDocument().Root;
+
+        // if (mainPart is null)
+        // {
+        //     return;
+        // }
+
+        // Replace the placeholders
+        foreach (var text in partElement.Descendants<Text>())
+        {
+            foreach (var replacement in replacements)
+            {
+                text.Text = text.Text.Replace(replacement.Key, replacement.Value);
+            }
+
+            if (text.Text.Contains("#{") || text.Text.Contains("}#"))
+            {
+                var parent = text.Parent;
+
+                var maxDepth = 10;
+                while (parent is not null
+                    && !replacements.Any(r => parent.InnerText.Contains(r.Key))
+                    && maxDepth > 0)
+                {
+                    parent = parent?.Parent;
+                    maxDepth--;
+                }
+
+                if (parent is not null)
+                { 
+                    System.Diagnostics.Debug.WriteLine($"Unreplaced text in node: {parent.InnerText}");
+
+                    foreach (var replacement in replacements.Where(r => parent.InnerText.Contains(r.Key)))
+                    {
+                        // Now that we know which parent contains the unreplaced text, we can replace it
+                        var allElements = parent.Elements().ToList();
+                        var textNodes = parent.Descendants<Text>().ToList();
+
+                        // Find the nodes which make up the text
+                        var startNode = textNodes.First(c => c.Text.Contains(replacement.Key[0]));
+                        var endNode = textNodes.Last(c => c.Text.Contains(replacement.Key[^1]));
+
+                        // Find the index of the elements which contain the start and end nodes
+                        var startIndex = allElements.IndexOf(allElements.First(c => c.Descendants().Contains(startNode)));
+                        var endIndex = allElements.IndexOf(allElements.First(c => c.Descendants().Contains(endNode)));
+
+                        // Find the inner text of all nodes between the start and end nodes
+                        var innerText = string.Join("", allElements.Skip(startIndex).Take(endIndex - startIndex + 1).Select(c => c.InnerText));
+
+                        innerText = innerText.Replace(replacement.Key, replacement.Value);
+
+                        startNode.Text = innerText;
+
+                        // Remove the nodes between the start and end nodes, starting from the end node
+                        for (var i = endIndex; i > startIndex; i--)
+                        {
+                            parent.RemoveChild(allElements[i]);
+                        }
+                    }
+
+                    System.Diagnostics.Debug.WriteLine($"Replaced text in node: {parent.InnerText}");
+                }
+            }
+        }
+
+        // var descendents = mainPart.Descendants();
+
+        // foreach (var descendant in descendents)
+        // {
+        //     if (descendant.HasElements)
+        //     {
+        //         continue;
+        //     }
+
+        //     if (!string.IsNullOrWhiteSpace(descendant.Value))
+        //     {
+        //         var xmlValue = descendant.Value;
+
+        //         foreach (var replacement in replacements)
+        //         {
+        //             xmlValue.Replace(replacement.Key, replacement.Value);
+        //         }
+
+        //         descendant.SetValue(xmlValue);
+        //     }
+        // }
+
+        // foreach (var replacement in replacements)
+        // {
+        //     // TextReplacer.SearchAndReplace(mainPart, replacement.Key, replacement.Value, false);
+        //     OpenXmlRegex.Replace(mainPart.Descendants(W.p).ToList(), new Regex(replacement.Key), replacement.Value, null);
+        //     OpenXmlRegex.Replace(mainPart.Descendants(W.t).ToList(), new Regex(replacement.Key), replacement.Value, null);
+        // }
+
+        // part.PutXDocument();
     }
 }
