@@ -1,10 +1,8 @@
 using System.Text.RegularExpressions;
-// using Codeuctivity.OpenXmlPowerTools;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Drawing.Diagrams;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
-using OpenXmlPowerTools;
 
 namespace CsharpOpenXml;
 
@@ -39,66 +37,6 @@ public static class WordDocs
                 ("Writing", "Securely At", "Good"),
                 ("Mathematics", "Below", "Good")
             };
-
-            // // Table header rpw
-            // var subjectTable = new Table(new TableRow(
-            //      new TableCell(GenerateTableCellPropsWithWidth("60"), new Paragraph(new Run(new Text("Subject")))),
-            //      new TableCell(GenerateTableCellPropsWithWidth("20"), new Paragraph(new Run(new Text("Result")))),
-            //      new TableCell(GenerateTableCellPropsWithWidth("20"), new Paragraph(new Run(new Text("Effort"))))
-            //  ));
-
-            // // add the rest of the rows
-            // subjectTable.Append(resultList.Select(x => new TableRow(
-            //     new TableCell(new Paragraph(new Run(new Text(x.Subject)))),
-            //     new TableCell(new Paragraph(new Run(new Text(x.Result)))),
-            //     new TableCell(new Paragraph(new Run(new Text(x.Effort))))
-            // )));
-
-            // body.Append(subjectTable);
-
-            // // insert white space
-            // body.Append(new Paragraph(new Run(new Text(""))));
-
-            // // New test table
-            // var tbl = new Table();
-
-
-
-
-
-            // tbl.AppendChild(tableProp);
-
-            // //Add n columns to table
-            // var tg = new TableGrid(new GridColumn(), new GridColumn());
-
-            // tbl.AppendChild(tg);
-
-            // var tr1 = new TableRow();
-
-            // //I Manually adjust width of the first column
-            // var tc1 = new TableCell(GenerateTableCellPropsWithWidth("270"), new Paragraph(new Run(new Text("№"))));
-
-            // //All other column are adjusted based on their content
-            // var tc2 = new TableCell(GenerateTableCellPropsWithWidth(), new Paragraph(new Run(new Text("Title"))));
-
-            // tr1.Append(tc1, tc2);
-            // tbl.AppendChild(tr1);
-
-            // //This method is only used for headers, while regular rows cells contain no TableCellProperties
-            // TableCellProperties GenerateTableCellPropsWithWidth(string width = "")
-            // {
-            //     // if width is null, the TableCellWidth will be set to Auto
-            //     var tableCell = string.IsNullOrEmpty(width)
-            //         ? new TableCellWidth { Type = TableWidthUnitValues.Auto }
-            //         : new TableCellWidth { Type = TableWidthUnitValues.Pct, Width = width };
-
-            //     TableCellProperties tcp = new TableCellProperties();
-            //     tcp.AppendChild(tableCell);
-            //     return tcp;
-            // }
-
-            // body.AppendChild(tbl);
-
         }
     }
 
@@ -211,6 +149,7 @@ public static class WordDocs
             wordDocument.Save();
         }
     }
+
     public static void ReplaceStrings(OpenXmlPart? part, OpenXmlCompositeElement? partElement, Dictionary<string, string> replacements)
     {
         if (part is null || partElement is null)
@@ -218,12 +157,7 @@ public static class WordDocs
             return;
         }
 
-        // var mainPart = part.GetXDocument().Root;
-
-        // if (mainPart is null)
-        // {
-        //     return;
-        // }
+        Dictionary<string, List<Text>> textReplacementNodes = new();
 
         // Replace the placeholders
         foreach (var text in partElement.Descendants<Text>())
@@ -257,8 +191,14 @@ public static class WordDocs
                         var textNodes = parent.Descendants<Text>().ToList();
 
                         // Find the nodes which make up the text
-                        var startNode = textNodes.First(c => c.Text.Contains(replacement.Key[0]));
-                        var endNode = textNodes.Last(c => c.Text.Contains(replacement.Key[^1]));
+                        var nodes = FindStartAndEndNodes(parent.Descendants<Text>().ToList(), replacement.Key);
+
+                        if (nodes is null)
+                        {
+                            continue;
+                        }
+
+                        var (startNode, endNode) = nodes.Value;
 
                         // Find the index of the elements which contain the start and end nodes
                         var startIndex = allElements.IndexOf(allElements.First(c => c.Descendants().Contains(startNode)));
@@ -276,42 +216,95 @@ public static class WordDocs
                         {
                             parent.RemoveChild(allElements[i]);
                         }
+
+                        if (textReplacementNodes.ContainsKey(replacement.Key))
+                        {
+                            textReplacementNodes[replacement.Key].Add(startNode);
+                        }
+                        else
+                        {
+                            textReplacementNodes.Add(replacement.Key, new List<Text> { startNode });
+                        }
                     }
 
                     System.Diagnostics.Debug.WriteLine($"Replaced text in node: {parent.InnerText}");
                 }
             }
         }
+    }
 
-        // var descendents = mainPart.Descendants();
+    private static (Text startNode, Text endNode)? FindStartAndEndNodes(List<Text> textNodes, string key, int? nodeTextOffset = null)
+    {
+        // Find the index of the first node which contains part of the key
+        var startIndex = -1;
+        var currentTextIndex = -1;
 
-        // foreach (var descendant in descendents)
-        // {
-        //     if (descendant.HasElements)
-        //     {
-        //         continue;
-        //     }
+        for (var i = 0; i < textNodes.Count; i++)
+        {
+            var text = i == 0 && nodeTextOffset is not null
+                ? textNodes[i].Text.Substring(nodeTextOffset.Value)
+                : textNodes[i].Text;
 
-        //     if (!string.IsNullOrWhiteSpace(descendant.Value))
-        //     {
-        //         var xmlValue = descendant.Value;
+            var textIndex = text.IndexOf(key[0]);
+            if (textIndex >= 0)
+            {
+                startIndex = i;
+                currentTextIndex = textIndex;
+                break;
+            }
+        }
 
-        //         foreach (var replacement in replacements)
-        //         {
-        //             xmlValue.Replace(replacement.Key, replacement.Value);
-        //         }
+        // If the start index is -1, the key was not found
+        if (startIndex == -1 || currentTextIndex == -1)
+        {
+            return null;
+        }
 
-        //         descendant.SetValue(xmlValue);
-        //     }
-        // }
+        System.Diagnostics.Debug.WriteLine($"Processing key: {key} at start index: {startIndex} and text index: {currentTextIndex}");
 
-        // foreach (var replacement in replacements)
-        // {
-        //     // TextReplacer.SearchAndReplace(mainPart, replacement.Key, replacement.Value, false);
-        //     OpenXmlRegex.Replace(mainPart.Descendants(W.p).ToList(), new Regex(replacement.Key), replacement.Value, null);
-        //     OpenXmlRegex.Replace(mainPart.Descendants(W.t).ToList(), new Regex(replacement.Key), replacement.Value, null);
-        // }
+        var currentNodeIndex = startIndex;
+        var tokenLeftToFind = key;
+        var currentNodeText = textNodes[currentNodeIndex].Text.Substring(currentTextIndex);
 
-        // part.PutXDocument();
+        // Remove the text from the token as we find it
+        while (tokenLeftToFind.Length > 0)
+        {
+            if (currentNodeText.Length == 0)
+            {
+                currentNodeIndex++;
+
+                // If we've reached the end of the nodes, the token is no longer valid
+                if (currentNodeIndex >= textNodes.Count)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Token no longer valid, reached the end of the nodes.");
+                    return null;
+                }
+
+                currentNodeText = textNodes[currentNodeIndex].Text;
+            }
+
+            var nextCharacter = currentNodeText[0];
+            var nextTokenCharacter = tokenLeftToFind[0];
+
+            // If the next index is one after the current index, we're still in the same node and the token is still valid
+            if (nextCharacter == nextTokenCharacter)
+            {
+                currentNodeText = currentNodeText.Substring(1);
+                tokenLeftToFind = tokenLeftToFind.Substring(1);
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"Token no longer valid, restarting from the next node, at index {currentNodeIndex}.");
+                // If the next index is not one after the current index, the token is no longer valid, so we need to reset and continue from where we are
+                var newNodeSet = textNodes.Skip(currentNodeIndex).ToList();
+
+                return FindStartAndEndNodes(newNodeSet, key, currentTextIndex + 1);
+            }
+        }
+
+        var startNode = textNodes[startIndex];
+        var endNode = textNodes[currentNodeIndex];
+
+        return (startNode, endNode);
     }
 }
